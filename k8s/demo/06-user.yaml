@@ -1,0 +1,66 @@
+# 用户服务 — user 业务域
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: podmaster-demo
+  labels:
+    app: user-service
+    app.kubernetes.io/name: user-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: user
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        app.kubernetes.io/name: user-service
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: podmaster-demo
+        business-domain: user
+        tier: backend
+    spec:
+      containers:
+        - name: user
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-c"]
+          args:
+            - |
+              echo "[INFO] UserService started"
+              while true; do sleep 3600; done
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: podmaster-demo
+  labels:
+    app: user-service
+    app.kubernetes.io/name: user-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: user
+  annotations:
+    podmaster.io/topology-edges: "mysql-db,redis-cache"
+spec:
+  selector:
+    app: user-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

@@ -1,0 +1,72 @@
+# 支付服务 — CrashLoop + 错误日志（AI 诊断 / 语音告警演示）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: podmaster-demo
+  labels:
+    app: payment-service
+    app.kubernetes.io/name: payment-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: payment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        app.kubernetes.io/name: payment-service
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: podmaster-demo
+        business-domain: payment
+        tier: backend
+    spec:
+      containers:
+        - name: payment
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-c"]
+          args:
+            - |
+              echo "[INFO] Starting PaymentApplication v2.1.0"
+              echo "[WARN] Database connection pool running low (2/10)"
+              echo "[ERROR] java.lang.NullPointerException: Cannot invoke PaymentRequest.getAmount() because request is null"
+              echo "    at com.payment.controller.PaymentController.process(PaymentController.java:87)"
+              echo "    at com.payment.service.PaymentService.charge(PaymentService.java:45)"
+              echo "[ERROR] org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection"
+              echo "[ERROR] Communications link failure - connection refused: mysql-db:3306"
+              echo "[ERROR] CrashLoopBackOff - container terminated with exit code 1"
+              sleep 3
+              exit 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: podmaster-demo
+  labels:
+    app: payment-service
+    app.kubernetes.io/name: payment-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: payment
+  annotations:
+    podmaster.io/topology-edges: "mysql-db"
+spec:
+  selector:
+    app: payment-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

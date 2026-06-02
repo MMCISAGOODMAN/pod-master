@@ -1,0 +1,33 @@
+# kubeadm 单节点集群配置 — v1.34.1 + 国内镜像加速
+# 用法: sudo kubeadm init --config=k8s/kubeadm/cluster-config.yaml
+
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "0.0.0.0"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.34.1
+# 镜像仓库（按实际环境配置 imageRepository）
+imageRepository: registry.aliyuncs.com/google_containers
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+controllerManager:
+  extraArgs:
+    bind-address: "0.0.0.0"
+scheduler:
+  extraArgs:
+    bind-address: "0.0.0.0"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: iptables

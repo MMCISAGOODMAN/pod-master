@@ -1,0 +1,24 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: pod-master
+  web:
+    resources:
+      static-locations: classpath:/static/
+
+# K8s 连接配置：local=读取本地 kubeconfig，in-cluster=集群内 ServiceAccount
+k8s:
+  connection-mode: local
+  kubeconfig-path: ${user.home}/.kube/config
+  default-namespace: podmaster-demo
+  # 资源成本单价（元/核/天、元/GB/天），用于业务域费用估算
+  cost:
+    cpu-per-core-day: 2.5
+    memory-per-gb-day: 0.8
+
+logging:
+  level:
+    com.podmaster: INFO
+    io.fabric8: WARN

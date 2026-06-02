@@ -1,0 +1,59 @@
+# Redis 缓存 — 资源请求过高保持 Pending（cache 业务域叶子节点）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cache
+  namespace: podmaster-demo
+  labels:
+    app: redis-cache
+    app.kubernetes.io/name: redis-cache
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-cache
+  template:
+    metadata:
+      labels:
+        app: redis-cache
+        app.kubernetes.io/name: redis-cache
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: podmaster-demo
+        business-domain: cache
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: "50"
+              memory: 64Gi
+            limits:
+              cpu: "50"
+              memory: 64Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache
+  namespace: podmaster-demo
+  labels:
+    app: redis-cache
+    app.kubernetes.io/name: redis-cache
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: cache
+spec:
+  selector:
+    app: redis-cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379

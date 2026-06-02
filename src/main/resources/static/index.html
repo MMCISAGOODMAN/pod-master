@@ -1,0 +1,1596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pod Master - K8s 集群监控大屏</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus@2.7.8/dist/index.css">
+  <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
+  <style>
+    /* 大屏监控主题 — 深蓝黑底 + 青色光效，无白色 */
+    :root {
+      --bg-base: #060e1a;
+      --bg-sidebar: #081422;
+      --bg-panel: #0c1a2e;
+      --bg-elevated: #112240;
+      --bg-input: #0f2038;
+      --border: #1a3a5c;
+      --border-glow: rgba(0,212,255,.35);
+      --border-light: #234a6e;
+      --text: #8eb4d4;
+      --text-bright: #c8e6ff;
+      --text-muted: #4a7090;
+      --accent: #00d4ff;
+      --accent-soft: rgba(0,212,255,.12);
+      --success: #00e676;
+      --warning: #ffb300;
+      --danger: #ff5252;
+      --sidebar-w: 210px;
+      --el-color-white: #0c1a2e;
+      --el-bg-color: #0c1a2e;
+      --el-bg-color-overlay: #112240;
+      --el-fill-color-blank: #0f2038;
+      --el-text-color-primary: #c8e6ff;
+      --el-text-color-regular: #8eb4d4;
+      --el-text-color-secondary: #4a7090;
+      --el-border-color: #1a3a5c;
+      --el-border-color-light: #234a6e;
+      --el-mask-color: rgba(4,12,24,.85);
+    }
+    html { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+      background: var(--bg-base); color: var(--text);
+      min-height: 100vh; overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background: radial-gradient(ellipse at 20% 0%, rgba(0,100,180,.12) 0%, transparent 50%),
+                  radial-gradient(ellipse at 80% 100%, rgba(0,212,255,.06) 0%, transparent 40%);
+    }
+    #app { position: relative; z-index: 1; }
+    #app { display: flex; height: 100vh; }
+
+    /* ===== 侧边栏 ===== */
+    .sidebar {
+      width: var(--sidebar-w); min-width: var(--sidebar-w);
+      background: linear-gradient(180deg, #081422 0%, #060e1a 100%);
+      border-right: 1px solid var(--border);
+      box-shadow: 2px 0 20px rgba(0,212,255,.05);
+      display: flex; flex-direction: column; z-index: 10;
+    }
+    .sidebar-brand { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); }
+    .sidebar-brand h1 { font-size: 18px; font-weight: 600; color: var(--text-bright); display: flex; align-items: center; gap: 8px; }
+    .sidebar-brand h1 span.logo { color: var(--accent); font-size: 22px; }
+    .sidebar-brand .desc { font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.4; }
+    .nav-menu { flex: 1; padding: 12px 8px; overflow-y: auto; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      border-radius: 8px; cursor: pointer; color: var(--text-muted);
+      font-size: 14px; margin-bottom: 4px; transition: all .15s; user-select: none;
+    }
+    .nav-item:hover { background: var(--bg-elevated); color: var(--text); }
+    .nav-item.active {
+      background: var(--accent-soft); color: var(--accent); font-weight: 500;
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .nav-item .nav-icon { font-size: 18px; width: 22px; text-align: center; opacity: .85; }
+    .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
+    .conn-badge { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg-elevated); border-radius: 8px; font-size: 12px; color: var(--text-muted); }
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .conn-dot.up { background: var(--success); box-shadow: 0 0 10px rgba(0,230,118,.6); animation: pulse-dot 2s infinite; }
+    @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .conn-dot.down { background: var(--danger); opacity: .8; }
+    .mock-badge { background: rgba(224,175,104,.25); color: var(--warning); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+
+    /* ===== 主区域 ===== */
+    .main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg-base); }
+    .topbar {
+      height: 64px; min-height: 64px; padding: 0 24px;
+      background: linear-gradient(90deg, #0a1628 0%, #0c1a2e 50%, #0a1628 100%);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 2px 16px rgba(0,212,255,.08);
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    }
+    .topbar-title {
+      font-size: 18px; font-weight: 600; color: var(--text-bright);
+      text-shadow: 0 0 20px rgba(0,212,255,.3);
+      letter-spacing: 1px;
+    }
+    .topbar-clock {
+      font-family: 'SF Mono', Consolas, monospace; font-size: 22px; font-weight: 600;
+      color: var(--accent); text-shadow: 0 0 12px rgba(0,212,255,.5);
+      letter-spacing: 2px; min-width: 200px; text-align: center;
+    }
+    .topbar-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .alert-ticker {
+      height: 32px; background: rgba(255,82,82,.08); border-top: 1px solid rgba(255,82,82,.2);
+      overflow: hidden; display: flex; align-items: center;
+    }
+    .alert-ticker-inner {
+      display: flex; animation: ticker 30s linear infinite; white-space: nowrap;
+    }
+    .alert-ticker-item {
+      padding: 0 40px; font-size: 12px; color: #ff8a80;
+      display: flex; align-items: center; gap: 8px;
+    }
+    @keyframes ticker { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+    .content-scroll { flex: 1; overflow-y: auto; padding: 20px 24px; background: var(--bg-base); }
+
+    /* ===== 统计卡片 ===== */
+    .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+    .stat-card {
+      background: linear-gradient(135deg, rgba(12,26,46,.9), rgba(17,34,64,.6));
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 18px 20px; display: flex; align-items: center; gap: 14px;
+      position: relative; overflow: hidden;
+    }
+    .stat-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    }
+    .stat-icon {
+      width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px;
+    }
+    .stat-icon.blue { background: var(--accent-soft); color: var(--accent); }
+    .stat-icon.green { background: rgba(158,206,106,.15); color: var(--success); }
+    .stat-icon.red { background: rgba(247,118,142,.12); color: var(--danger); }
+    .stat-icon.orange { background: rgba(224,175,104,.15); color: var(--warning); }
+    .stat-val {
+      font-size: 32px; font-weight: 700; line-height: 1; color: var(--text-bright);
+      font-family: 'SF Mono', Consolas, monospace;
+    }
+    .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    /* ===== 面板 ===== */
+    .panel {
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+      box-shadow: 0 0 24px rgba(0,212,255,.04);
+    }
+    .panel-head {
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+      background: rgba(0,0,0,.08);
+    }
+    .panel-head h3 { font-size: 14px; font-weight: 600; color: var(--text-bright); }
+    .panel-body { padding: 16px 18px; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+    /* ===== 告警条 ===== */
+    .alert-strip {
+      background: rgba(247,118,142,.08); border: 1px solid rgba(247,118,142,.25); border-radius: 10px;
+      padding: 10px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text);
+    }
+
+    /* ===== Pod 表格 ===== */
+    .status-tag-running { --el-tag-bg-color: rgba(158,206,106,.12); --el-tag-border-color: rgba(158,206,106,.4); --el-tag-text-color: var(--success); }
+    .status-tag-pending { --el-tag-bg-color: rgba(224,175,104,.12); --el-tag-border-color: rgba(224,175,104,.4); --el-tag-text-color: var(--warning); }
+    .status-tag-failed { --el-tag-bg-color: rgba(247,118,142,.12); --el-tag-border-color: rgba(247,118,142,.4); --el-tag-text-color: var(--danger); }
+    .table-footer { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; background: rgba(0,0,0,.06); }
+
+    /* ===== 拓扑 ===== */
+    .topo-layout { display: grid; grid-template-columns: 1fr 260px; gap: 16px; min-height: calc(100vh - 180px); }
+    .topology-canvas-wrap {
+      position: relative; background: #071220; border: 1px solid var(--border); border-radius: 4px;
+      overflow: hidden; min-height: 560px; cursor: crosshair;
+      box-shadow: inset 0 0 40px rgba(0,212,255,.03);
+    }
+    .topology-svg { width: 100%; height: 100%; min-height: 560px; }
+    .topo-side { display: flex; flex-direction: column; gap: 12px; }
+    .topo-side-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+    .topo-side-card h4 { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; letter-spacing: .5px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .legend-line { width: 24px; height: 3px; border-radius: 2px; background: var(--accent); opacity: .8; }
+    .domain-group rect.domain-bg { fill: rgba(122,162,247,.04); stroke: var(--border); stroke-width: 1; rx: 8; }
+    .domain-group text.domain-label { fill: var(--accent); font-size: 12px; font-weight: 600; opacity: .9; }
+    .pod-node circle { stroke-width: 2; cursor: pointer; transition: filter .2s; }
+    .pod-node.running circle { fill: #0a3d2e; stroke: var(--success); }
+    .pod-node.pending circle { fill: #3d3008; stroke: var(--warning); }
+    .pod-node.failed circle, .pod-node.abnormal circle { fill: #3d0a14; stroke: var(--danger); }
+    .pod-node.selected circle { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 0 8px rgba(0,212,255,.7)); }
+    .pod-node.highlighted circle { stroke: #e0af68; stroke-width: 3; }
+    .pod-node text { fill: var(--text-muted); font-size: 10px; text-anchor: middle; pointer-events: none; }
+    .edge-line { fill: none; stroke-linecap: round; }
+    .selection-box { fill: rgba(122,162,247,.06); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4; opacity: .8; }
+    .pod-tooltip {
+      position: absolute; background: var(--bg-elevated); border: 1px solid var(--border-light); border-radius: 10px;
+      padding: 12px 14px; font-size: 12px; max-width: 340px; z-index: 100; pointer-events: none;
+      box-shadow: 0 8px 24px rgba(0,0,0,.35); color: var(--text);
+    }
+    .pod-tooltip h4 { color: var(--accent); margin-bottom: 6px; font-size: 13px; word-break: break-all; font-weight: 600; }
+    .pod-tooltip .err-log { color: var(--danger); font-family: monospace; font-size: 11px; margin-top: 3px; word-break: break-all; opacity: .9; }
+
+    /* ===== AI 诊断 ===== */
+    .diag-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; min-height: 500px; }
+    .diag-sidebar { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .diag-main { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .diag-empty { display: flex; align-items: center; justify-content: center; min-height: 400px; }
+    .suggestion-card { background: var(--bg-elevated); border-left: 3px solid var(--accent); padding: 12px 14px; margin-bottom: 8px; border-radius: 0 10px 10px 0; color: var(--text); }
+    .suggestion-card.high { border-left-color: var(--danger); }
+
+    /* ===== 日志 ===== */
+    .log-console {
+      background: #050d18; color: #6ec8e0; font-family: 'SF Mono', Consolas, monospace;
+      font-size: 12px; line-height: 1.7; padding: 16px; border-radius: 4px; overflow-y: auto;
+      border: 1px solid var(--border);
+    }
+    .log-line-info { color: var(--text-muted); }
+    .log-line-warning { color: var(--warning); }
+    .log-line-error { color: var(--danger); background: rgba(247,118,142,.08); display: block; padding: 1px 6px; border-radius: 3px; margin: 1px 0; }
+
+    /* ===== 成本 ===== */
+    .cost-hero {
+      background: linear-gradient(135deg, rgba(122,162,247,.1), rgba(158,206,106,.06));
+      border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 16px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .cost-hero .amount { font-size: 36px; font-weight: 600; color: var(--success); }
+    .cost-bar { height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+    .cost-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--success)); border-radius: 3px; opacity: .85; }
+
+    /* ===== Element Plus 柔和暗色 ===== */
+    .el-table {
+      --el-table-bg-color: var(--bg-panel); --el-table-tr-bg-color: var(--bg-panel);
+      --el-table-header-bg-color: #0a1628; --el-table-row-hover-bg-color: var(--bg-elevated);
+      --el-table-border-color: var(--border); --el-table-text-color: var(--text);
+      --el-table-header-text-color: var(--text-muted);
+      background-color: var(--bg-panel) !important;
+    }
+    .el-table th.el-table__cell,
+    .el-table thead tr,
+    .el-table__header thead tr,
+    .el-table thead th,
+    .el-table__header-wrapper th,
+    .el-table__fixed-header-wrapper th {
+      background-color: #0a1628 !important;
+      color: var(--text-muted) !important;
+      border-color: var(--border) !important;
+    }
+    .el-table td.el-table__cell {
+      background-color: var(--bg-panel) !important;
+      color: var(--text) !important;
+      border-color: var(--border) !important;
+    }
+    .el-table__inner-wrapper,
+    .el-table__header-wrapper,
+    .el-table__body-wrapper,
+    .el-table__footer-wrapper { background: var(--bg-panel) !important; }
+    .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell { background: #081422 !important; }
+    .el-table__body tr.hover-row > td.el-table__cell { background: var(--bg-elevated) !important; }
+    .el-table__fixed,
+    .el-table__fixed-right,
+    .el-table__fixed-right-patch,
+    .el-table__fixed-body-wrapper { background: var(--bg-panel) !important; }
+    .el-table__fixed .el-table__header th { background: #0a1628 !important; }
+    .el-table .cell { background: transparent !important; }
+    .el-table th.el-table__cell { font-weight: 500; }
+    .el-dialog {
+      --el-dialog-bg-color: var(--bg-panel); --el-dialog-border-radius: 14px;
+      --el-dialog-title-font-size: 16px; border: 1px solid var(--border);
+    }
+    .el-dialog__title { color: var(--text-bright); }
+    .el-descriptions {
+      --el-descriptions-item-bordered-label-background: var(--bg-elevated);
+      --el-descriptions-table-border: 1px solid var(--border);
+    }
+    .el-descriptions__label { color: var(--text-muted) !important; }
+    .el-descriptions__content { color: var(--text) !important; }
+    .el-empty { --el-empty-fill-color-0: var(--bg-panel); --el-empty-fill-color-1: var(--bg-elevated); }
+    .el-empty__description p { color: var(--text-muted); }
+    .el-pagination {
+      --el-pagination-bg-color: transparent; --el-pagination-text-color: var(--text-muted);
+      --el-pagination-button-bg-color: var(--bg-elevated); --el-pagination-hover-color: var(--accent);
+    }
+    .el-input__wrapper, .el-select__wrapper {
+      background-color: var(--bg-input) !important;
+      box-shadow: 0 0 0 1px var(--border) inset !important;
+    }
+    .el-input__inner, .el-select__placeholder, .el-select__selected-item { color: var(--text) !important; }
+    .el-input__inner::placeholder { color: var(--text-muted) !important; }
+    .el-button--primary {
+      --el-button-bg-color: #006680; --el-button-border-color: #00a8cc;
+      --el-button-hover-bg-color: #008099; --el-button-hover-border-color: #00d4ff;
+      --el-button-text-color: #c8e6ff;
+    }
+    .el-button--default {
+      --el-button-bg-color: var(--bg-elevated); --el-button-border-color: var(--border);
+      --el-button-text-color: var(--text); --el-button-hover-text-color: var(--text-bright);
+    }
+    .el-button.is-link { color: var(--accent); }
+    .el-tag { --el-tag-bg-color: var(--bg-elevated); border-color: var(--border); color: var(--text); }
+    .el-tag--plain { --el-tag-bg-color: transparent; }
+    .el-dropdown-menu { background: var(--bg-elevated) !important; border: 1px solid var(--border) !important; }
+    .el-dropdown-menu__item { color: var(--text) !important; }
+    .el-dropdown-menu__item:hover { background: var(--accent-soft) !important; color: var(--accent) !important; }
+    .el-popper.is-light { background: var(--bg-elevated) !important; border: 1px solid var(--border) !important; }
+    .el-select-dropdown__item { color: var(--text) !important; }
+    .el-select-dropdown__item.hover, .el-select-dropdown__item:hover { background: var(--accent-soft) !important; }
+    .el-select-dropdown__item.selected { color: var(--accent) !important; }
+    .el-message-box { background: var(--bg-panel) !important; border: 1px solid var(--border) !important; }
+    .el-message-box__title, .el-message-box__message { color: var(--text) !important; }
+    .el-switch.is-checked .el-switch__core { background: var(--accent); border-color: var(--accent); }
+    .el-switch__label { color: var(--text-muted) !important; }
+    .el-switch__label.is-active { color: var(--text) !important; }
+
+    /* ===== Pod 卡片墙 ===== */
+    .pod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-bottom: 16px; }
+    .pod-card {
+      background: linear-gradient(135deg, #0c1a2e, #112240);
+      border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px;
+      cursor: pointer; transition: all .2s; position: relative;
+    }
+    .pod-card:hover { border-color: var(--accent); box-shadow: 0 0 20px rgba(0,212,255,.15); transform: translateY(-2px); }
+    .pod-card.abnormal { border-color: rgba(255,82,82,.5); animation: alert-border 2s infinite; }
+    @keyframes alert-border { 0%,100%{box-shadow:0 0 8px rgba(255,82,82,.2)} 50%{box-shadow:0 0 16px rgba(255,82,82,.4)} }
+    .pod-card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .pod-card-name { font-size: 13px; font-weight: 600; color: var(--text-bright); word-break: break-all; }
+    .pod-card-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+    .pod-card-status.running { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .pod-card-status.pending { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+    .pod-card-status.failed { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+    .pod-card-meta { font-size: 11px; color: var(--text-muted); line-height: 1.8; }
+    .pod-card-actions { margin-top: 12px; display: flex; gap: 8px; }
+    .btn-enter {
+      flex: 1; padding: 6px 12px; background: linear-gradient(90deg, #006680, #008099);
+      border: 1px solid var(--accent); border-radius: 3px; color: var(--accent);
+      font-size: 12px; cursor: pointer; text-align: center; transition: all .2s;
+    }
+    .btn-enter:hover { background: var(--accent); color: #060e1a; box-shadow: 0 0 12px rgba(0,212,255,.4); }
+
+    /* ===== Pod 进入工作台 ===== */
+    .cockpit-overlay {
+      position: fixed; inset: 0; z-index: 2000;
+      background: rgba(4,12,24,.92); backdrop-filter: blur(8px);
+      display: flex; flex-direction: column;
+    }
+    .cockpit-header {
+      height: 56px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(90deg, #0a1628, #0c1a2e);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 2px 20px rgba(0,212,255,.1);
+    }
+    .cockpit-title { font-size: 16px; color: var(--accent); font-weight: 600; }
+    .cockpit-title span { color: var(--text-muted); font-weight: 400; margin: 0 8px; }
+    .cockpit-metrics { display: flex; gap: 24px; }
+    .cockpit-metric { text-align: center; }
+    .cockpit-metric-val { font-size: 20px; font-weight: 700; font-family: monospace; color: var(--text-bright); }
+    .cockpit-metric-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .cockpit-gauge { width: 80px; height: 4px; background: #1a3a5c; border-radius: 2px; margin-top: 4px; overflow: hidden; }
+    .cockpit-gauge-fill { height: 100%; border-radius: 2px; transition: width .5s; }
+    .cockpit-gauge-fill.cpu { background: linear-gradient(90deg, #006680, var(--accent)); }
+    .cockpit-gauge-fill.mem { background: linear-gradient(90deg, #004d40, var(--success)); }
+    .cockpit-tabs {
+      display: flex; gap: 0; padding: 0 24px; background: #081422;
+      border-bottom: 1px solid var(--border);
+    }
+    .cockpit-tab {
+      padding: 12px 20px; font-size: 13px; color: var(--text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all .2s;
+    }
+    .cockpit-tab:hover { color: var(--text); }
+    .cockpit-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .cockpit-body { flex: 1; overflow: hidden; padding: 16px 24px; display: flex; flex-direction: column; }
+    .cockpit-panel { flex: 1; overflow-y: auto; }
+    .event-timeline { list-style: none; }
+    .event-item {
+      padding: 12px 16px; margin-bottom: 8px; background: #0c1a2e;
+      border-left: 3px solid var(--border); border-radius: 0 4px 4px 0;
+    }
+    .event-item.warning { border-left-color: var(--warning); }
+    .event-item.error, .event-item.danger { border-left-color: var(--danger); }
+    .event-item.normal { border-left-color: var(--success); }
+    .event-reason { font-size: 13px; color: var(--text-bright); font-weight: 500; }
+    .event-msg { font-size: 12px; color: var(--text-muted); margin-top: 4px; word-break: break-all; }
+    .event-time { font-size: 10px; color: var(--text-muted); margin-top: 4px; font-family: monospace; }
+    .terminal-wrap { display: flex; flex-direction: column; height: 100%; gap: 10px; }
+    .terminal-input-row { display: flex; gap: 10px; }
+    .terminal-output {
+      flex: 1; min-height: 300px; background: #030810; color: #00e676;
+      font-family: 'SF Mono', Consolas, monospace; font-size: 13px;
+      padding: 16px; border: 1px solid var(--border); border-radius: 4px;
+      overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+    }
+    .terminal-prompt { color: var(--accent); }
+    .quick-cmds { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .quick-cmd {
+      padding: 4px 10px; font-size: 11px; background: #112240; border: 1px solid var(--border);
+      border-radius: 3px; color: var(--text-muted); cursor: pointer;
+    }
+    .quick-cmd:hover { border-color: var(--accent); color: var(--accent); }
+    .view-toggle { display: flex; gap: 4px; margin-left: auto; }
+    .view-toggle-btn {
+      padding: 4px 10px; font-size: 11px; background: #112240; border: 1px solid var(--border);
+      border-radius: 3px; color: var(--text-muted); cursor: pointer;
+    }
+    .view-toggle-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .el-pagination.is-background .el-pager li.is-active { background: #006680 !important; color: #c8e6ff !important; }
+    .el-loading-mask { background-color: rgba(6,14,26,.8) !important; }
+    .el-message { --el-message-bg-color: #112240; --el-message-border-color: var(--border); }
+    .el-message-box__btns .el-button--primary { background: #006680; border-color: #00a8cc; }
+
+    /* ===== 全局去除白色背景 ===== */
+    .el-popper, .el-popper.is-light, .el-popper.is-dark,
+    .el-select-dropdown, .el-dropdown-menu, .el-dropdown__popper,
+    .el-tooltip__popper, .el-picker-panel, .el-autocomplete-suggestion {
+      background: #112240 !important;
+      border-color: var(--border) !important;
+      color: var(--text) !important;
+    }
+    .el-tooltip__popper .el-popper__arrow::before { background: #112240 !important; border-color: var(--border) !important; }
+    .el-select-dropdown__item, .el-dropdown-menu__item { color: var(--text) !important; }
+    .el-select-dropdown__item.hover, .el-select-dropdown__item:hover,
+    .el-dropdown-menu__item:hover, .el-dropdown-menu__item:focus {
+      background: var(--accent-soft) !important; color: var(--accent) !important;
+    }
+    .el-dialog, .el-dialog__header, .el-dialog__body, .el-dialog__footer { background: var(--bg-panel) !important; }
+    .el-descriptions, .el-descriptions__body, .el-descriptions__table,
+    .el-descriptions__cell, .el-descriptions__label, .el-descriptions__content {
+      background: var(--bg-panel) !important; color: var(--text) !important;
+    }
+    .el-descriptions__label { color: var(--text-muted) !important; }
+    .el-descriptions__body .el-descriptions__table.is-bordered .el-descriptions__cell {
+      border-color: var(--border) !important;
+    }
+    .el-pagination .btn-prev, .el-pagination .btn-next, .el-pagination .el-pager li {
+      background: var(--bg-elevated) !important; color: var(--text-muted) !important;
+    }
+    .el-pagination .el-pager li.is-active { background: #006680 !important; color: #c8e6ff !important; }
+    .el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
+      background-color: var(--bg-input) !important;
+      box-shadow: 0 0 0 1px var(--border) inset !important;
+    }
+    .el-switch__core { background: #1a3a5c !important; border-color: var(--border) !important; }
+    .el-switch.is-checked .el-core, .el-switch.is-checked .el-switch__core {
+      background: #006680 !important; border-color: var(--accent) !important;
+    }
+    .el-tag, .el-tag.el-tag--plain { background: #112240 !important; border-color: var(--border) !important; color: var(--text) !important; }
+    .el-tag--dark { border-color: transparent !important; }
+    .el-empty__image svg { opacity: .4; }
+    .el-scrollbar__view { background: transparent !important; }
+    .el-button.is-circle { background: var(--bg-elevated) !important; border-color: var(--border) !important; color: var(--text) !important; }
+    .el-button--default { background: var(--bg-elevated) !important; border-color: var(--border) !important; color: var(--text) !important; }
+    .el-button--default:hover { background: #1a3a5c !important; color: var(--text-bright) !important; }
+    .el-message-box { background: var(--bg-panel) !important; }
+    .el-message-box__header, .el-message-box__content, .el-message-box__btns { background: transparent !important; }
+    .el-overlay { background: rgba(4,12,24,.85) !important; }
+    .el-checkbox__inner, .el-radio__inner { background: var(--bg-input) !important; border-color: var(--border) !important; }
+
+    /* ===== xterm 终端 ===== */
+    .terminal-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+    .xterm-container {
+      flex: 1; min-height: calc(100vh - 200px);
+      background: #030810; border: 1px solid var(--border); border-radius: 4px;
+      padding: 6px; overflow: hidden;
+    }
+    .xterm-container .xterm,
+    .xterm-container .xterm-viewport,
+    .xterm-container .xterm-screen { background-color: #030810 !important; height: 100%; }
+    .terminal-status {
+      font-size: 11px; color: var(--text-muted); padding: 6px 0;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .terminal-status .connected { color: var(--success); }
+    .terminal-status .disconnected { color: var(--danger); }
+
+    @media (max-width: 1200px) {
+      .stat-row { grid-template-columns: repeat(2, 1fr); }
+      .topo-layout, .diag-layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1><span class="logo">⎈</span> Pod Master</h1>
+      <div class="desc">K8s 集群监控 · 流量拓扑 · AI 诊断</div>
+    </div>
+    <nav class="nav-menu">
+      <div class="nav-item" :class="{active: activeTab==='pods'}" @click="activeTab='pods'">
+        <span class="nav-icon">📦</span> Pod 管理
+      </div>
+      <div class="nav-item" :class="{active: activeTab==='topology'}" @click="activeTab='topology'; loadTopology()">
+        <span class="nav-icon">🔗</span> 流量拓扑
+      </div>
+      <div class="nav-item" :class="{active: activeTab==='diagnose'}" @click="activeTab='diagnose'">
+        <span class="nav-icon">🤖</span> AI 诊断
+      </div>
+      <div class="nav-item" :class="{active: activeTab==='cost'}" @click="activeTab='cost'; loadCost()">
+        <span class="nav-icon">💰</span> 资源成本
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="conn-badge">
+        <span class="conn-dot" :class="connected ? 'up' : 'down'"></span>
+        <span>{{ connected ? '集群已连接' : (mockMode ? '模拟模式' : '未连接') }}</span>
+        <span v-if="mockMode" class="mock-badge">MOCK</span>
+      </div>
+      <div style="margin-top:10px;">
+        <el-switch v-model="voiceAlertEnabled" size="small" active-text="语音告警" @change="onVoiceToggle"/>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 主内容 -->
+  <div class="main-area">
+    <header class="topbar">
+      <div class="topbar-title">{{ pageTitle }}</div>
+      <div class="topbar-clock">{{ currentTime }}</div>
+      <div class="topbar-actions">
+        <el-select v-model="namespace" placeholder="命名空间" style="width:160px" size="default" @change="onNamespaceChange">
+          <el-option v-for="ns in namespaces" :key="ns" :label="ns" :value="ns"/>
+        </el-select>
+        <el-button circle @click="refreshCurrent" title="刷新">
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </div>
+    </header>
+    <div v-if="allAlerts.length" class="alert-ticker">
+      <div class="alert-ticker-inner">
+        <span v-for="(a,i) in allAlerts.concat(allAlerts)" :key="i" class="alert-ticker-item">
+          ⚠ {{ a.namespace }}/{{ a.podName }} — {{ a.message }}
+        </span>
+      </div>
+    </div>
+
+    <div class="content-scroll">
+      <!-- 告警 -->
+      <div v-if="latestAlerts.length" class="alert-strip">
+        <el-icon color="#f7768e" :size="18"><WarningFilled /></el-icon>
+        <span style="flex:1">{{ latestAlerts[0].message }}</span>
+        <el-tag size="small" type="danger" effect="dark">{{ latestAlerts.length }} 告警</el-tag>
+      </div>
+
+      <!-- 概览卡片（Pod 页显示） -->
+      <div v-if="activeTab==='pods'" class="stat-row">
+        <div class="stat-card">
+          <div class="stat-icon blue">📦</div>
+          <div><div class="stat-val">{{ total }}</div><div class="stat-label">Pod 总数</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon green">✓</div>
+          <div><div class="stat-val">{{ podStats.running }}</div><div class="stat-label">Running</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon orange">⏳</div>
+          <div><div class="stat-val">{{ podStats.pending }}</div><div class="stat-label">Pending</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon red">✕</div>
+          <div><div class="stat-val">{{ podStats.failed }}</div><div class="stat-label">异常</div></div>
+        </div>
+      </div>
+
+      <!-- ===== Pod 管理 ===== -->
+      <div v-show="activeTab==='pods'">
+        <!-- Pod 卡片墙 -->
+        <div class="pod-grid">
+          <div v-for="row in podList" :key="row.namespace+'/'+row.name"
+               class="pod-card" :class="{abnormal: row.abnormal || row.status!=='Running' && row.status!=='Pending'}"
+               @click="enterPod(row)">
+            <div class="pod-card-head">
+              <div class="pod-card-name">{{ row.name }}</div>
+              <span class="pod-card-status" :class="podCardStatus(row)"></span>
+            </div>
+            <div class="pod-card-meta">
+              <div>域 {{ row.businessDomain }} · {{ row.status }}</div>
+              <div>CPU {{ row.cpuUsage }} · Mem {{ row.memoryUsage }} · 重启 {{ row.restartCount }}</div>
+            </div>
+            <div class="pod-card-actions" @click.stop>
+              <div class="btn-enter" @click="enterPod(row)">▶ 进入工作台</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+        <div class="panel-head">
+          <h3>Pod 列表</h3>
+          <div class="toolbar">
+            <el-input v-model="keyword" placeholder="搜索 Pod 名称..." style="width:220px" clearable @clear="loadPods" @keyup.enter="loadPods"/>
+            <el-button type="primary" @click="loadPods">搜索</el-button>
+          </div>
+        </div>
+        <el-table :data="podList" v-loading="loading" stripe style="width:100%">
+          <el-table-column prop="name" label="Pod 名称" min-width="180" show-overflow-tooltip>
+            <template #default="{row}">
+              <span style="font-weight:500">{{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="businessDomain" label="业务域" width="110">
+            <template #default="{row}">
+              <el-tag size="small" effect="plain">{{ row.businessDomain }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="100" align="center">
+            <template #default="{row}">
+              <el-tag :class="statusClass(row.status)" effect="dark" size="small">{{ row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="restartCount" label="重启" width="70" align="center"/>
+          <el-table-column label="资源" width="130">
+            <template #default="{row}">{{ row.cpuUsage }} / {{ row.memoryUsage }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" align="center" fixed="right">
+            <template #default="{row}">
+              <el-button type="primary" size="small" @click="enterPod(row)">进入</el-button>
+              <el-dropdown trigger="click" @command="cmd => handlePodAction(cmd, row)">
+                <el-button size="small">更多 ▾</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="detail">📋 详情</el-dropdown-item>
+                    <el-dropdown-item command="logs">📜 日志</el-dropdown-item>
+                    <el-dropdown-item command="diagnose">🤖 AI 诊断</el-dropdown-item>
+                    <el-dropdown-item command="restart" divided>🔄 重启</el-dropdown-item>
+                    <el-dropdown-item command="delete" style="color:#ff5252">🗑 删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="table-footer">
+          <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+            layout="total, sizes, prev, pager, next" :page-sizes="[10,20,50]" background @change="loadPods"/>
+        </div>
+      </div>
+      </div>
+
+      <!-- ===== 流量拓扑 ===== -->
+      <div v-show="activeTab==='topology'" class="topo-layout">
+        <div class="topology-canvas-wrap" ref="topoWrap"
+             @mousedown="onCanvasMouseDown" @mousemove="onCanvasMouseMove" @mouseup="onCanvasMouseUp" @mouseleave="onCanvasMouseUp">
+          <svg class="topology-svg" :viewBox="`0 0 ${canvasW} ${canvasH}`" ref="topoSvg">
+            <g class="edges">
+              <line v-for="(e,i) in topology.edges" :key="'e'+i"
+                :x1="nodePos[e.sourceId]?.x" :y1="nodePos[e.sourceId]?.y"
+                :x2="nodePos[e.targetId]?.x" :y2="nodePos[e.targetId]?.y"
+                class="edge-line" :stroke="e.hasError ? '#ff5252' : '#00d4ff'"
+                :stroke-width="edgeWidth(e.qps)" :opacity="0.65"/>
+            </g>
+            <g v-for="(dg,di) in topology.domains" :key="'d'+di" class="domain-group">
+              <rect class="domain-bg" :x="domainLayout[dg.domain]?.x" :y="domainLayout[dg.domain]?.y"
+                :width="domainLayout[dg.domain]?.w" :height="domainLayout[dg.domain]?.h"/>
+              <text class="domain-label" :x="domainLayout[dg.domain]?.x + 12" :y="domainLayout[dg.domain]?.y + 20">{{ dg.domain }}</text>
+              <g v-for="pod in dg.pods" :key="pod.id" class="pod-node"
+                :class="[podStatusClass(pod), {selected: selectedPodIds.includes(pod.id), highlighted: highlightedIds.has(pod.id), abnormal: pod.abnormal}]"
+                @click.stop="onPodClick(pod, $event)" @mouseenter="showPodTooltip(pod, $event)" @mouseleave="hidePodTooltip">
+                <circle :cx="nodePos[pod.id]?.x" :cy="nodePos[pod.id]?.y" r="20"/>
+                <text :x="nodePos[pod.id]?.x" :y="nodePos[pod.id]?.y + 34">{{ truncate(pod.name, 12) }}</text>
+              </g>
+            </g>
+            <rect v-if="selecting" class="selection-box"
+              :x="Math.min(selectStart.x, selectEnd.x)" :y="Math.min(selectStart.y, selectEnd.y)"
+              :width="Math.abs(selectEnd.x - selectStart.x)" :height="Math.abs(selectEnd.y - selectStart.y)"/>
+          </svg>
+          <div v-if="tooltip.visible" class="pod-tooltip" :style="{left: tooltip.x+'px', top: tooltip.y+'px'}">
+            <h4>{{ tooltip.pod?.name }}</h4>
+            <div>CPU {{ tooltip.pod?.cpuUsage?.toFixed(2) }} · Mem {{ tooltip.pod?.memoryUsage?.toFixed(0) }}Mi · 重启 {{ tooltip.pod?.restartCount }}</div>
+            <div v-for="(l,i) in (tooltip.pod?.recentErrorLogs||[]).slice(0,5)" :key="i" class="err-log">{{ l }}</div>
+          </div>
+        </div>
+        <div class="topo-side">
+          <div class="topo-side-card">
+            <h4>操作</h4>
+            <el-select v-model="topoNamespace" style="width:100%;margin-bottom:10px" @change="loadTopology">
+              <el-option label="全部命名空间" value="all"/>
+              <el-option v-for="ns in namespaces" :key="ns" :label="ns" :value="ns"/>
+            </el-select>
+            <el-button type="primary" style="width:100%;margin-bottom:8px" :disabled="selectedPodIds.length!==1" @click="enterSelectedPod">进入工作台</el-button>
+            <el-button style="width:100%;margin-bottom:8px" @click="loadTopology">刷新拓扑</el-button>
+            <el-button style="width:100%;margin-bottom:8px" @click="clearSelection">清除选中</el-button>
+            <el-button type="warning" style="width:100%;margin-bottom:8px" :disabled="!selectedPodIds.length" @click="batchRestartSelected">批量重启 ({{selectedPodIds.length}})</el-button>
+            <el-button type="danger" style="width:100%" :disabled="!selectedPodIds.length" @click="batchDeleteSelected">批量删除 ({{selectedPodIds.length}})</el-button>
+          </div>
+          <div class="topo-side-card">
+            <h4>图例</h4>
+            <div class="legend-item"><span class="legend-dot" style="background:#9ece6a"></span> Running</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#e0af68"></span> Pending</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#f7768e"></span> Failed / 异常</div>
+            <div class="legend-item"><span class="legend-line"></span> 调用链 (粗细=QPS)</div>
+            <div class="legend-item"><span class="legend-line" style="background:#f7768e;opacity:.8"></span> 报错链路</div>
+          </div>
+          <div class="topo-side-card">
+            <h4>提示</h4>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
+              点击 Pod 进入工作台<br>Shift+点击 多选<br>空白处拖拽 框选
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== AI 诊断 ===== -->
+      <div v-show="activeTab==='diagnose'" class="diag-layout">
+        <div class="diag-sidebar">
+          <h4 style="font-size:13px;margin-bottom:12px">选择 Pod</h4>
+          <el-select v-model="diagPod" placeholder="搜索 Pod..." style="width:100%;margin-bottom:12px" filterable>
+            <el-option v-for="p in allPodsFlat" :key="p.id" :label="p.namespace+' / '+p.name" :value="p.id"/>
+          </el-select>
+          <el-button type="primary" style="width:100%" @click="runDiagnose" :loading="diagLoading">开始 AI 诊断</el-button>
+        </div>
+        <div class="diag-main">
+          <template v-if="diagnosis">
+            <div class="panel-head">
+              <span>{{ diagnosis.namespace }} / {{ diagnosis.podName }}</span>
+              <el-tag :type="severityType(diagnosis.severity)" effect="dark">{{ diagnosis.faultType }}</el-tag>
+            </div>
+            <div class="panel-body">
+              <div style="background:var(--accent-soft);border-radius:10px;padding:14px;margin-bottom:16px;font-size:14px;color:var(--accent)">{{ diagnosis.summary }}</div>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <h4 style="font-size:13px;margin-bottom:10px;color:var(--text-muted)">修复建议</h4>
+                  <div v-for="(s,i) in diagnosis.suggestions" :key="i" class="suggestion-card" :class="s.priority">
+                    <strong>{{ s.title }}</strong>
+                    <el-tag size="small" style="margin-left:6px">{{ s.priority }}</el-tag>
+                    <div style="color:var(--text-muted);margin-top:6px;font-size:13px">{{ s.description }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <h4 style="font-size:13px;margin-bottom:10px;color:var(--text-muted)">错误堆栈</h4>
+                  <pre v-for="(st,i) in diagnosis.errorStacks" :key="i" class="log-console" style="max-height:160px;margin-bottom:8px">{{ st }}</pre>
+                </el-col>
+              </el-row>
+              <h4 style="font-size:13px;margin:16px 0 10px;color:var(--text-muted)">日志详情</h4>
+              <div class="log-console" style="max-height:280px">
+                <span v-for="(l,i) in diagnosis.logLines" :key="i" :class="'log-line-'+l.level">{{ l.content }}
+</span>
+              </div>
+            </div>
+          </template>
+          <div v-else class="diag-empty">
+            <el-empty description="← 左侧选择 Pod 并开始诊断"/>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 资源成本 ===== -->
+      <div v-show="activeTab==='cost'">
+        <div v-if="costData">
+          <div class="cost-hero">
+            <div>
+              <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">集群每日估算成本</div>
+              <div class="amount">¥ {{ costData.totalDailyCost }}</div>
+            </div>
+            <el-select v-model="costNamespace" style="width:160px" @change="loadCost">
+              <el-option label="全部命名空间" value="all"/>
+              <el-option v-for="ns in namespaces" :key="ns" :label="ns" :value="ns"/>
+            </el-select>
+          </div>
+          <div class="panel">
+            <el-table :data="costData.domainCosts" stripe>
+              <el-table-column prop="domain" label="业务域" width="140">
+                <template #default="{row}"><strong>{{ row.domain }}</strong></template>
+              </el-table-column>
+              <el-table-column prop="podCount" label="Pod" width="70" align="center"/>
+              <el-table-column prop="cpuCores" label="CPU(核)" width="90" align="right"/>
+              <el-table-column prop="memoryGb" label="内存(GB)" width="100" align="right"/>
+              <el-table-column label="日费用" width="100" align="right">
+                <template #default="{row}"><span style="color:var(--success);font-weight:600">¥{{ row.dailyCost }}</span></template>
+              </el-table-column>
+              <el-table-column label="占比" min-width="180">
+                <template #default="{row}">
+                  <span style="font-size:13px">{{ row.costPercent }}%</span>
+                  <div class="cost-bar"><div class="cost-bar-fill" :style="{width: Math.min(row.costPercent,100)+'%'}"></div></div>
+                </template>
+              </el-table-column>
+              <el-table-column label="Top Pod" min-width="200">
+                <template #default="{row}">
+                  <el-tag v-for="(p,i) in row.topPods" :key="i" size="small" effect="plain" style="margin:2px">{{ p.name }} ¥{{ p.dailyCost }}</el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
+        <el-empty v-else description="加载中..." style="margin-top:60px"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pod 进入工作台 -->
+  <div v-if="cockpitVisible" class="cockpit-overlay">
+    <div class="cockpit-header">
+      <div class="cockpit-title">
+        ⎈ {{ cockpitPod?.namespace }}<span>/</span>{{ cockpitPod?.name }}
+        <el-tag size="small" :class="statusClass(cockpitData?.detail?.status)" effect="dark" style="margin-left:12px">{{ cockpitData?.detail?.status }}</el-tag>
+      </div>
+      <div class="cockpit-metrics" v-if="cockpitData">
+        <div class="cockpit-metric">
+          <div class="cockpit-metric-val">{{ cockpitData.cpuUsagePercent?.toFixed(0) }}%</div>
+          <div class="cockpit-metric-label">CPU</div>
+          <div class="cockpit-gauge"><div class="cockpit-gauge-fill cpu" :style="{width: cockpitData.cpuUsagePercent+'%'}"></div></div>
+        </div>
+        <div class="cockpit-metric">
+          <div class="cockpit-metric-val">{{ cockpitData.memoryUsagePercent?.toFixed(0) }}%</div>
+          <div class="cockpit-metric-label">内存</div>
+          <div class="cockpit-gauge"><div class="cockpit-gauge-fill mem" :style="{width: cockpitData.memoryUsagePercent+'%'}"></div></div>
+        </div>
+        <div class="cockpit-metric">
+          <div class="cockpit-metric-val">{{ cockpitData.detail?.restartCount || 0 }}</div>
+          <div class="cockpit-metric-label">重启次数</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <el-button size="small" @click="refreshCockpit" :loading="cockpitLoading">刷新</el-button>
+        <el-button size="small" type="warning" @click="restartFromCockpit">重启</el-button>
+        <el-button size="small" @click="closeCockpit">✕ 关闭</el-button>
+      </div>
+    </div>
+    <div class="cockpit-tabs">
+      <div v-for="t in cockpitTabs" :key="t.id" class="cockpit-tab" :class="{active: cockpitTab===t.id}" @click="cockpitTab=t.id">{{ t.label }}</div>
+    </div>
+    <div class="cockpit-body" v-loading="cockpitLoading">
+      <!-- 概览 -->
+      <div v-show="cockpitTab==='overview'" class="cockpit-panel">
+        <el-descriptions v-if="cockpitData?.detail" :column="3" border size="small">
+          <el-descriptions-item label="Pod IP">{{ cockpitData.detail.podIp || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="业务域">{{ cockpitData.detail.businessDomain }}</el-descriptions-item>
+          <el-descriptions-item label="节点">{{ cockpitData.detail.nodeName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="CPU Req">{{ cockpitData.detail.cpuRequest }}</el-descriptions-item>
+          <el-descriptions-item label="Mem Req">{{ cockpitData.detail.memoryRequest }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ cockpitData.detail.startTime || '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-table v-if="cockpitData?.detail?.containers" :data="cockpitData.detail.containers" size="small" style="margin-top:16px">
+          <el-table-column prop="name" label="容器"/>
+          <el-table-column prop="image" label="镜像" show-overflow-tooltip/>
+          <el-table-column prop="state" label="状态" width="120"/>
+          <el-table-column prop="restartCount" label="重启" width="70"/>
+        </el-table>
+        <div v-if="cockpitData?.diagnosis" style="margin-top:16px">
+          <div style="font-size:13px;color:var(--accent);margin-bottom:8px">AI 快速诊断</div>
+          <div style="background:var(--accent-soft);border-radius:4px;padding:12px;font-size:13px;color:var(--text-bright)">{{ cockpitData.diagnosis.summary }}</div>
+        </div>
+      </div>
+      <!-- 实时日志 -->
+      <div v-show="cockpitTab==='logs'" class="cockpit-panel">
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+          <el-switch v-model="logAutoRefresh" active-text="自动刷新 (5s)" size="small"/>
+          <el-button size="small" @click="refreshCockpitLogs">立即刷新</el-button>
+        </div>
+        <div class="log-console" style="max-height:calc(100vh - 220px);min-height:400px">{{ cockpitData?.logs || '加载中...' }}</div>
+      </div>
+      <!-- 终端 -->
+      <div v-show="cockpitTab==='terminal'" class="cockpit-panel terminal-wrap">
+        <div class="terminal-status">
+          <span>交互式 Shell · 直接操作 Pod 容器</span>
+          <span :class="terminalConnected ? 'connected' : 'disconnected'">
+            {{ terminalConnected ? '● 已连接' : (mockMode ? '● 模拟终端' : '○ 未连接') }}
+          </span>
+        </div>
+        <div ref="terminalRef" class="xterm-container"></div>
+      </div>
+      <!-- AI 诊断 -->
+      <div v-show="cockpitTab==='diagnose'" class="cockpit-panel">
+        <template v-if="cockpitData?.diagnosis">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <el-tag :type="severityType(cockpitData.diagnosis.severity)" effect="dark">{{ cockpitData.diagnosis.faultType }}</el-tag>
+            <span style="color:var(--text-bright)">{{ cockpitData.diagnosis.summary }}</span>
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <h4 style="font-size:13px;margin-bottom:10px;color:var(--text-muted)">修复建议</h4>
+              <div v-for="(s,i) in cockpitData.diagnosis.suggestions" :key="i" class="suggestion-card" :class="s.priority">
+                <strong>{{ s.title }}</strong>
+                <el-tag size="small" style="margin-left:6px">{{ s.priority }}</el-tag>
+                <div style="color:var(--text-muted);margin-top:6px;font-size:13px">{{ s.description }}</div>
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <h4 style="font-size:13px;margin-bottom:10px;color:var(--text-muted)">错误堆栈</h4>
+              <pre v-for="(st,i) in cockpitData.diagnosis.errorStacks" :key="i" class="log-console" style="max-height:160px;margin-bottom:8px">{{ st }}</pre>
+            </el-col>
+          </el-row>
+        </template>
+      </div>
+      <!-- 事件时间线 -->
+      <div v-show="cockpitTab==='events'" class="cockpit-panel">
+        <ul class="event-timeline">
+          <li v-for="(e,i) in (cockpitData?.events||[])" :key="i" class="event-item" :class="eventClass(e)">
+            <div class="event-reason">{{ e.reason }} <el-tag size="small" effect="plain">{{ e.type }}</el-tag> ×{{ e.count }}</div>
+            <div class="event-msg">{{ e.message }}</div>
+            <div class="event-time">{{ e.timestamp }}</div>
+          </li>
+        </ul>
+        <el-empty v-if="!cockpitData?.events?.length" description="暂无事件"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- 详情弹窗 -->
+  <el-dialog v-model="detailVisible" title="Pod 详情" width="600px" destroy-on-close>
+    <el-descriptions v-if="podDetail" :column="2" border size="small">
+      <el-descriptions-item label="名称">{{ podDetail.name }}</el-descriptions-item>
+      <el-descriptions-item label="命名空间">{{ podDetail.namespace }}</el-descriptions-item>
+      <el-descriptions-item label="状态"><el-tag :class="statusClass(podDetail.status)" size="small">{{ podDetail.status }}</el-tag></el-descriptions-item>
+      <el-descriptions-item label="业务域">{{ podDetail.businessDomain }}</el-descriptions-item>
+      <el-descriptions-item label="Pod IP">{{ podDetail.podIp || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="重启">{{ podDetail.restartCount }}</el-descriptions-item>
+      <el-descriptions-item label="CPU Req">{{ podDetail.cpuRequest }}</el-descriptions-item>
+      <el-descriptions-item label="Mem Req">{{ podDetail.memoryRequest }}</el-descriptions-item>
+    </el-descriptions>
+    <el-table v-if="podDetail" :data="podDetail.containers" size="small" style="margin-top:16px">
+      <el-table-column prop="name" label="容器"/>
+      <el-table-column prop="image" label="镜像" show-overflow-tooltip/>
+      <el-table-column prop="state" label="状态" width="120"/>
+    </el-table>
+  </el-dialog>
+
+  <!-- 日志弹窗 -->
+  <el-dialog v-model="logVisible" :title="'日志 · '+logPodName" width="860px" destroy-on-close top="5vh">
+    <div class="log-console" style="max-height:60vh;min-height:300px">{{ logContent }}</div>
+    <template #footer>
+      <el-button @click="refreshLogs">刷新</el-button>
+      <el-button type="primary" @click="diagnoseFromLog">AI 诊断</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script src="https://unpkg.com/vue@3.4.31/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus@2.7.8/dist/index.full.min.js"></script>
+<script src="https://unpkg.com/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
+<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script>
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } = Vue;
+const API = '/api';
+
+const MOCK = {
+  namespaces: ['podmaster-demo', 'default', 'kube-system'],
+  pods: [
+    { name: 'api-gateway-7d8f9', namespace: 'production', status: 'Running', phase: 'Running', restartCount: 0, businessDomain: 'gateway', cpuUsage: '0.45', memoryUsage: '256Mi', abnormal: false, labels: { app: 'api-gateway', 'business-domain': 'gateway' } },
+    { name: 'order-service-abc12', namespace: 'production', status: 'Running', phase: 'Running', restartCount: 1, businessDomain: 'order', cpuUsage: '0.82', memoryUsage: '512Mi', abnormal: false, labels: { app: 'order-service' } },
+    { name: 'payment-service-x9k2', namespace: 'production', status: 'Failed', phase: 'Failed', restartCount: 5, businessDomain: 'payment', cpuUsage: '0.12', memoryUsage: '128Mi', abnormal: true, abnormalReason: 'CrashLoopBackOff', labels: { app: 'payment-service' } },
+    { name: 'mysql-0', namespace: 'production', status: 'Running', phase: 'Running', restartCount: 0, businessDomain: 'database', cpuUsage: '1.20', memoryUsage: '2048Mi', abnormal: false, labels: { app: 'mysql' } },
+    { name: 'redis-cache-ff3a', namespace: 'production', status: 'Pending', phase: 'Pending', restartCount: 0, businessDomain: 'cache', cpuUsage: '0.05', memoryUsage: '64Mi', abnormal: false, labels: { app: 'redis' } },
+    { name: 'user-service-4b2c', namespace: 'staging', status: 'Running', phase: 'Running', restartCount: 2, businessDomain: 'user', cpuUsage: '0.35', memoryUsage: '384Mi', abnormal: false, labels: { app: 'user-service' } },
+  ],
+  topology: {
+    domains: [
+      { domain: 'gateway', pods: [{ id: 'production/api-gateway-7d8f9', name: 'api-gateway-7d8f9', namespace: 'production', status: 'Running', cpuUsage: 0.45, memoryUsage: 256, restartCount: 0, abnormal: false, recentErrorLogs: [], upstreamIds: [], downstreamIds: ['production/order-service-abc12'] }]},
+      { domain: 'order', pods: [{ id: 'production/order-service-abc12', name: 'order-service-abc12', namespace: 'production', status: 'Running', cpuUsage: 0.82, memoryUsage: 512, restartCount: 1, abnormal: false, recentErrorLogs: ['WARN: slow query'], upstreamIds: ['production/api-gateway-7d8f9'], downstreamIds: ['production/mysql-0'] }]},
+      { domain: 'payment', pods: [{ id: 'production/payment-service-x9k2', name: 'payment-service-x9k2', namespace: 'production', status: 'Failed', cpuUsage: 0.12, memoryUsage: 128, restartCount: 5, abnormal: true, recentErrorLogs: ['ERROR: NullPointerException at PaymentController.process:87', 'ERROR: CrashLoopBackOff', 'FATAL: connection refused payment-db:3306'], upstreamIds: ['production/api-gateway-7d8f9'], downstreamIds: ['production/mysql-0'] }]},
+      { domain: 'database', pods: [{ id: 'production/mysql-0', name: 'mysql-0', namespace: 'production', status: 'Running', cpuUsage: 1.2, memoryUsage: 2048, restartCount: 0, abnormal: false, recentErrorLogs: [], upstreamIds: ['production/order-service-abc12','production/payment-service-x9k2'], downstreamIds: [] }]},
+    ],
+    edges: [
+      { sourceId: 'production/api-gateway-7d8f9', targetId: 'production/order-service-abc12', qps: 320, errorRate: 0.02, hasError: false },
+      { sourceId: 'production/api-gateway-7d8f9', targetId: 'production/payment-service-x9k2', qps: 180, errorRate: 0.35, hasError: true },
+      { sourceId: 'production/order-service-abc12', targetId: 'production/mysql-0', qps: 95, errorRate: 0.01, hasError: false },
+      { sourceId: 'production/payment-service-x9k2', targetId: 'production/mysql-0', qps: 12, errorRate: 0.45, hasError: true },
+    ],
+    alertPods: []
+  },
+  diagnosis: {
+    podName: 'payment-service-x9k2', namespace: 'production',
+    summary: 'AI 诊断：[NullPointer] 空指针 + [ServiceOffline] 下游不可用，严重级别 critical',
+    faultType: 'NullPointer', severity: 'critical', diagnosed: true,
+    logLines: [
+      { lineNumber: 1, content: '2024-06-01 10:23:01 INFO  Starting payment service...', level: 'info' },
+      { lineNumber: 2, content: '2024-06-01 10:23:05 WARN  Database connection pool low', level: 'warning' },
+      { lineNumber: 3, content: '2024-06-01 10:23:10 ERROR java.lang.NullPointerException at PaymentController.process:87', level: 'error' },
+      { lineNumber: 4, content: '    at com.payment.service.PaymentService.charge:45', level: 'error' },
+      { lineNumber: 5, content: '2024-06-01 10:23:11 ERROR connection refused: payment-db:3306', level: 'error' },
+      { lineNumber: 6, content: '2024-06-01 10:23:15 FATAL CrashLoopBackOff exit code 1', level: 'error' },
+    ],
+    errorStacks: ['java.lang.NullPointerException at PaymentController.process:87\n    at PaymentService.charge:45'],
+    suggestions: [
+      { title: '修复空值校验', description: '在 PaymentController.process 第87行增加 null check', priority: 'high' },
+      { title: '检查下游 Pod', description: '确认 payment-db Service 后端 Pod Running', priority: 'high' },
+      { title: '查看崩溃前日志', description: 'kubectl logs --previous 获取退出前日志', priority: 'high' },
+    ]
+  },
+  cost: {
+    totalDailyCost: 48.6, currency: 'CNY',
+    domainCosts: [
+      { domain: 'database', podCount: 1, cpuCores: 2, memoryGb: 4, dailyCost: 18.2, costPercent: 37.4, topPods: [{ name: 'mysql-0', dailyCost: 18.2 }] },
+      { domain: 'order', podCount: 1, cpuCores: 1, memoryGb: 1, dailyCost: 3.3, costPercent: 6.8, topPods: [{ name: 'order-service', dailyCost: 3.3 }] },
+      { domain: 'gateway', podCount: 1, cpuCores: 0.5, memoryGb: 0.5, dailyCost: 1.65, costPercent: 3.4, topPods: [{ name: 'api-gateway', dailyCost: 1.65 }] },
+      { domain: 'payment', podCount: 1, cpuCores: 0.5, memoryGb: 0.25, dailyCost: 1.45, costPercent: 3.0, topPods: [{ name: 'payment-service', dailyCost: 1.45 }] },
+    ]
+  },
+  alerts: [
+    { podName: 'payment-service-x9k2', namespace: 'production', alertType: 'CrashLoop', message: 'Pod 处于 CrashLoopBackOff', severity: 'critical', timestamp: Date.now() },
+  ],
+  logs: `[INFO] Starting PaymentApplication v2.1.0\n[WARN] Database connection pool low\n[ERROR] java.lang.NullPointerException at PaymentController.process:87\n[ERROR] connection refused: payment-db:3306\n[FATAL] CrashLoopBackOff exit code 1`,
+  cockpit: {
+    detail: { name: 'payment-service-x9k2', namespace: 'production', status: 'Failed', businessDomain: 'payment', podIp: '10.244.1.5', nodeName: 'kind-worker', restartCount: 5, cpuRequest: '0.5 cores', memoryRequest: '512 Mi', creationTime: '2024-06-01T08:00:00Z', containers: [{ name: 'main', image: 'payment:2.1', state: 'Waiting', restartCount: 5 }] },
+    logs: `[INFO] Starting PaymentApplication v2.1.0\n[WARN] Database connection pool low\n[ERROR] java.lang.NullPointerException at PaymentController.process:87\n[FATAL] CrashLoopBackOff exit code 1`,
+    events: [
+      { type: 'Warning', reason: 'BackOff', message: 'Back-off restarting failed container', timestamp: '2024-06-01T10:23:15Z', count: '12' },
+      { type: 'Normal', reason: 'Started', message: 'Started container main', timestamp: '2024-06-01T10:22:00Z', count: '5' },
+    ],
+    diagnosis: null,
+    cpuUsagePercent: 78, memoryUsagePercent: 65
+  }
+};
+
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(API + path, { ...opts, headers: { 'Content-Type': 'application/json', ...opts.headers } });
+  const json = await res.json();
+  if (json.code === 503) { const err = new Error(json.message); err.k8sUnavailable = true; throw err; }
+  if (json.code !== 200) throw new Error(json.message || 'API error');
+  return json.data;
+}
+
+const app = createApp({
+  setup() {
+    const mockMode = ref(false);
+    const connected = ref(false);
+    const activeTab = ref('pods');
+    const namespaces = ref(['podmaster-demo']);
+    const namespace = ref('podmaster-demo');
+    const keyword = ref('');
+    const podList = ref([]);
+    const page = ref(1);
+    const pageSize = ref(10);
+    const total = ref(0);
+    const loading = ref(false);
+
+    const topoNamespace = ref('podmaster-demo');
+    const topology = ref({ domains: [], edges: [], alertPods: [] });
+    const nodePos = ref({});
+    const domainLayout = ref({});
+    const canvasW = 1200, canvasH = 560;
+
+    const selectedPodIds = ref([]);
+    const highlightedIds = ref(new Set());
+    const selecting = ref(false);
+    const selectStart = reactive({ x: 0, y: 0 });
+    const selectEnd = reactive({ x: 0, y: 0 });
+    const tooltip = reactive({ visible: false, x: 0, y: 0, pod: null });
+
+    const diagPod = ref('');
+    const diagnosis = ref(null);
+    const diagLoading = ref(false);
+    const costNamespace = ref('podmaster-demo');
+    const costData = ref(null);
+
+    const detailVisible = ref(false);
+    const podDetail = ref(null);
+    const logVisible = ref(false);
+    const logContent = ref('');
+    const logPodName = ref('');
+    const logPodRef = ref(null);
+
+    const voiceAlertEnabled = ref(false);
+    const latestAlerts = ref([]);
+    const allAlerts = ref([]);
+    const spokenAlertKeys = new Set();
+    let alertTimer = null;
+    let clockTimer = null;
+    const currentTime = ref('');
+
+    const cockpitVisible = ref(false);
+    const cockpitPod = ref(null);
+    const cockpitData = ref(null);
+    const cockpitLoading = ref(false);
+    const cockpitTab = ref('overview');
+    const cockpitTabs = [
+      { id: 'overview', label: '📊 概览' },
+      { id: 'logs', label: '📜 实时日志' },
+      { id: 'terminal', label: '💻 终端' },
+      { id: 'diagnose', label: '🤖 AI 诊断' },
+      { id: 'events', label: '📋 事件' },
+    ];
+    const logAutoRefresh = ref(true);
+    const terminalRef = ref(null);
+    const terminalConnected = ref(false);
+    let term = null;
+    let fitAddon = null;
+    let terminalWs = null;
+    let mockTermBuffer = '';
+    let mockTermCwd = '/';
+    let resizeObserver = null;
+    let logRefreshTimer = null;
+
+    const pageTitle = computed(() => ({
+      pods: '集群 Pod 监控', topology: '业务流量拓扑', diagnose: 'AI 日志诊断', cost: '资源成本统计'
+    })[activeTab.value] || 'Pod Master 监控中心');
+
+    const podStats = computed(() => {
+      const s = { running: 0, pending: 0, failed: 0 };
+      podList.value.forEach(p => {
+        if (p.status === 'Running') s.running++;
+        else if (p.status === 'Pending') s.pending++;
+        else s.failed++;
+      });
+      return s;
+    });
+
+    const allPodsFlat = computed(() => {
+      const list = [];
+      (topology.value.domains || []).forEach(d => (d.pods || []).forEach(p => list.push({ ...p, id: p.id })));
+      if (!list.length) podList.value.forEach(p => list.push({ ...p, id: p.namespace + '/' + p.name }));
+      return list;
+    });
+
+    async function checkConnection() {
+      try {
+        const data = await apiFetch('/health');
+        connected.value = data.status === 'UP';
+        mockMode.value = !connected.value;
+        return connected.value;
+      } catch { connected.value = false; mockMode.value = true; return false; }
+    }
+
+    async function loadWithFallback(apiFn, mockFn) {
+      if (mockMode.value) return mockFn();
+      try { return await apiFn(); }
+      catch (e) {
+        if (e.k8sUnavailable || e.message?.includes('K8s')) {
+          connected.value = false; mockMode.value = true;
+          ElementPlus.ElMessage.warning('K8s 未连接，已切换模拟模式');
+          return mockFn();
+        }
+        throw e;
+      }
+    }
+
+    async function loadNamespaces() {
+      namespaces.value = await loadWithFallback(() => apiFetch('/namespaces'), () => MOCK.namespaces);
+    }
+
+    async function loadPods() {
+      loading.value = true;
+      try {
+        const data = await loadWithFallback(
+          () => apiFetch(`/pods?namespace=${namespace.value}&keyword=${encodeURIComponent(keyword.value)}&page=${page.value}&pageSize=${pageSize.value}`),
+          () => {
+            let list = MOCK.pods;
+            if (keyword.value) list = list.filter(p => p.name.includes(keyword.value));
+            const from = (page.value - 1) * pageSize.value;
+            return { records: list.slice(from, from + pageSize.value), total: list.length };
+          }
+        );
+        podList.value = Array.isArray(data) ? data : data.records;
+        total.value = Array.isArray(data) ? data.length : data.total;
+      } finally { loading.value = false; }
+    }
+
+    function onNamespaceChange() {
+      topoNamespace.value = namespace.value;
+      costNamespace.value = namespace.value;
+      loadPods();
+    }
+
+    function refreshCurrent() {
+      if (activeTab.value === 'pods') loadPods();
+      else if (activeTab.value === 'topology') loadTopology();
+      else if (activeTab.value === 'cost') loadCost();
+      else pollAlerts();
+    }
+
+    function layoutTopology() {
+      const pos = {}, layout = {};
+      let xOffset = 40, yBase = 80;
+      (topology.value.domains || []).forEach(dg => {
+        const cols = Math.ceil(Math.sqrt(dg.pods.length));
+        const w = Math.max(cols * 120, 200);
+        const rows = Math.ceil(dg.pods.length / cols);
+        layout[dg.domain] = { x: xOffset, y: 40, w, h: Math.max(rows * 100, 120) };
+        dg.pods.forEach((pod, i) => {
+          const col = i % cols, row = Math.floor(i / cols);
+          pos[pod.id] = { x: xOffset + 60 + col * 120, y: yBase + row * 90 };
+        });
+        xOffset += w + 40;
+      });
+      nodePos.value = pos;
+      domainLayout.value = layout;
+    }
+
+    async function loadTopology() {
+      topology.value = await loadWithFallback(
+        () => apiFetch(`/topology?namespace=${topoNamespace.value}`),
+        () => JSON.parse(JSON.stringify(MOCK.topology))
+      );
+      layoutTopology();
+    }
+
+    async function loadCost() {
+      costData.value = await loadWithFallback(() => apiFetch(`/cost?namespace=${costNamespace.value}`), () => MOCK.cost);
+    }
+
+    async function pollAlerts() {
+      try {
+        const alerts = await loadWithFallback(() => apiFetch('/alerts?namespace=all'), () => MOCK.alerts);
+        latestAlerts.value = alerts.slice(0, 3);
+        allAlerts.value = alerts;
+        if (voiceAlertEnabled.value) alerts.forEach(a => {
+          const key = a.namespace + '/' + a.podName + '/' + a.alertType;
+          if (!spokenAlertKeys.has(key)) { spokenAlertKeys.add(key); speakAlert(a); }
+        });
+      } catch {}
+    }
+
+    function speakAlert(a) {
+      if (!voiceAlertEnabled.value || !window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(`告警：${a.namespace} ${a.podName} ${a.message}`);
+      u.lang = 'zh-CN';
+      window.speechSynthesis.speak(u);
+    }
+    function onVoiceToggle(val) {
+      if (!val) {
+        window.speechSynthesis?.cancel();
+      }
+    }
+
+    function statusClass(s) {
+      if (s === 'Running') return 'status-tag-running';
+      if (s === 'Pending') return 'status-tag-pending';
+      return 'status-tag-failed';
+    }
+    function podStatusClass(p) {
+      if (p.abnormal || p.status === 'Failed') return 'failed';
+      if (p.status === 'Pending') return 'pending';
+      return 'running';
+    }
+    function edgeWidth(qps) { return Math.max(1, Math.min(8, qps / 50)); }
+    function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '…' : s; }
+    function updateClock() {
+      const now = new Date();
+      currentTime.value = now.toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function podCardStatus(row) {
+      if (row.status === 'Running') return 'running';
+      if (row.status === 'Pending') return 'pending';
+      return 'failed';
+    }
+
+    function eventClass(e) {
+      if (e.type === 'Warning') return 'warning';
+      if (e.reason?.includes('Failed') || e.reason?.includes('Error')) return 'error';
+      return 'normal';
+    }
+
+    async function enterPod(row) {
+      cockpitPod.value = row;
+      cockpitVisible.value = true;
+      cockpitTab.value = 'overview';
+      await loadCockpit();
+      startLogAutoRefresh();
+    }
+
+    function closeCockpit() {
+      disconnectTerminal();
+      cockpitVisible.value = false;
+      cockpitPod.value = null;
+      cockpitData.value = null;
+      stopLogAutoRefresh();
+    }
+
+    async function loadCockpit() {
+      if (!cockpitPod.value) return;
+      cockpitLoading.value = true;
+      try {
+        const { namespace, name } = cockpitPod.value;
+        if (mockMode.value) {
+          const mock = JSON.parse(JSON.stringify(MOCK.cockpit));
+          mock.detail.name = name;
+          mock.detail.namespace = namespace;
+          mock.diagnosis = { ...MOCK.diagnosis, podName: name, namespace };
+          cockpitData.value = mock;
+        } else {
+          cockpitData.value = await apiFetch(`/pods/${namespace}/${name}/cockpit`);
+        }
+      } catch (e) {
+        ElementPlus.ElMessage.error('加载工作台失败: ' + e.message);
+      } finally { cockpitLoading.value = false; }
+    }
+
+    async function refreshCockpit() { await loadCockpit(); }
+    async function refreshCockpitLogs() {
+      if (!cockpitPod.value) return;
+      const { namespace, name } = cockpitPod.value;
+      try {
+        const logs = mockMode.value ? MOCK.cockpit.logs : await apiFetch(`/pods/${namespace}/${name}/logs?tailLines=500`);
+        if (cockpitData.value) cockpitData.value.logs = logs;
+      } catch {}
+    }
+
+    function startLogAutoRefresh() {
+      stopLogAutoRefresh();
+      logRefreshTimer = setInterval(() => {
+        if (cockpitVisible.value && cockpitTab.value === 'logs' && logAutoRefresh.value) refreshCockpitLogs();
+      }, 5000);
+    }
+    function stopLogAutoRefresh() { if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; } }
+
+    function initXterm() {
+      if (term || !terminalRef.value) return;
+      term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: "'SF Mono', Consolas, 'Courier New', monospace",
+        theme: {
+          background: '#030810',
+          foreground: '#00e676',
+          cursor: '#00d4ff',
+          selectionBackground: '#1a3a5c',
+          black: '#030810', red: '#ff5252', green: '#00e676', yellow: '#ffb300',
+          blue: '#00d4ff', magenta: '#ce93d8', cyan: '#00d4ff', white: '#8eb4d4',
+          brightBlack: '#4a7090', brightRed: '#ff8a80', brightGreen: '#69f0ae',
+          brightYellow: '#ffd54f', brightBlue: '#40c4ff', brightMagenta: '#ea80fc',
+          brightCyan: '#18ffff', brightWhite: '#c8e6ff',
+        },
+        allowProposedApi: true,
+      });
+      fitAddon = new (window.FitAddon?.FitAddon || window.FitAddon)();
+      term.loadAddon(fitAddon);
+      term.open(terminalRef.value);
+      fitAddon.fit();
+    }
+
+    function resizeTerminal() {
+      if (!term || !fitAddon) return;
+      fitAddon.fit();
+      if (terminalWs?.readyState === WebSocket.OPEN) {
+        terminalWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    }
+
+    function mockTermPrompt() {
+      const pod = cockpitPod.value?.name || 'pod';
+      return `\r\n\x1b[36m${pod}\x1b[0m:\x1b[34m${mockTermCwd}\x1b[0m$ `;
+    }
+
+    function handleMockInput(data) {
+      if (data === '\r') {
+        const line = mockTermBuffer.trim();
+        mockTermBuffer = '';
+        term.write('\r\n');
+        if (line === 'clear') { term.clear(); term.write(mockTermPrompt()); return; }
+        if (line === 'pwd') { term.write(mockTermCwd + mockTermPrompt()); return; }
+        if (line === 'ls' || line === 'ls -la') {
+          term.write('bin  etc  home  tmp  var  app' + mockTermPrompt()); return;
+        }
+        if (line.startsWith('echo ')) { term.write(line.slice(5) + mockTermPrompt()); return; }
+        if (line === 'help') {
+          term.write('模拟终端命令: ls, pwd, echo, clear, help' + mockTermPrompt()); return;
+        }
+        if (line) term.write(`\x1b[33m[mock]\x1b[0m ${line}` + mockTermPrompt());
+        else term.write(mockTermPrompt());
+        return;
+      }
+      if (data === '\u007f') {
+        if (mockTermBuffer.length > 0) {
+          mockTermBuffer = mockTermBuffer.slice(0, -1);
+          term.write('\b \b');
+        }
+        return;
+      }
+      if (data >= ' ') { mockTermBuffer += data; term.write(data); }
+    }
+
+    function connectTerminal() {
+      disconnectTerminal(false);
+      nextTick(() => {
+        initXterm();
+        if (!term) return;
+        term.clear();
+        mockTermBuffer = '';
+        mockTermCwd = '/';
+        if (mockMode.value) {
+          terminalConnected.value = false;
+          term.writeln('\x1b[33m[模拟终端模式 — 连接 K8s 后可操作真实 Shell]\x1b[0m');
+          term.write(mockTermPrompt());
+          term.onData(handleMockInput);
+          if (terminalRef.value && !resizeObserver) {
+            resizeObserver = new ResizeObserver(() => resizeTerminal());
+            resizeObserver.observe(terminalRef.value);
+          }
+          resizeTerminal();
+          return;
+        }
+        const { namespace, name } = cockpitPod.value;
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${proto}//${location.host}/ws/pods/terminal?namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(name)}`;
+        terminalWs = new WebSocket(url);
+        terminalWs.onopen = () => {
+          terminalConnected.value = true;
+          resizeTerminal();
+        };
+        terminalWs.onmessage = (e) => term.write(e.data);
+        terminalWs.onclose = () => {
+          terminalConnected.value = false;
+          term.writeln('\r\n\x1b[33m[终端连接已断开]\x1b[0m');
+        };
+        terminalWs.onerror = () => {
+          terminalConnected.value = false;
+          term.writeln('\r\n\x1b[31m[终端连接失败]\x1b[0m');
+        };
+        term.onData((data) => {
+          if (terminalWs?.readyState === WebSocket.OPEN) {
+            terminalWs.send(JSON.stringify({ type: 'stdin', data }));
+          }
+        });
+        if (terminalRef.value && !resizeObserver) {
+          resizeObserver = new ResizeObserver(() => resizeTerminal());
+          resizeObserver.observe(terminalRef.value);
+        }
+      });
+    }
+
+    function disconnectTerminal(clearRef = true) {
+      terminalConnected.value = false;
+      if (terminalWs) { terminalWs.close(); terminalWs = null; }
+      if (term) { term.dispose(); term = null; fitAddon = null; }
+      if (clearRef && resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+      mockTermBuffer = '';
+    }
+
+    watch(cockpitTab, (tab) => {
+      if (tab === 'terminal' && cockpitVisible.value) connectTerminal();
+      else if (tab !== 'terminal') disconnectTerminal(false);
+    });
+
+    watch(cockpitVisible, (visible) => {
+      if (!visible) disconnectTerminal();
+    });
+
+    async function restartFromCockpit() {
+      if (!cockpitPod.value) return;
+      ElementPlus.ElMessageBox.confirm(`确定重启 ${cockpitPod.value.namespace}/${cockpitPod.value.name}？`, '确认', { type: 'warning' })
+        .then(async () => {
+          if (!mockMode.value) await apiFetch(`/pods/${cockpitPod.value.namespace}/${cockpitPod.value.name}/restart`, { method: 'POST' });
+          ElementPlus.ElMessage.success('重启指令已发送');
+          await loadCockpit(); loadPods();
+        }).catch(() => {});
+    }
+
+    function enterSelectedPod() {
+      if (selectedPodIds.value.length !== 1) return;
+      const id = selectedPodIds.value[0];
+      const [ns, name] = id.split('/');
+      enterPod({ namespace: ns, name });
+    }
+
+    function severityType(s) { return s === 'critical' ? 'danger' : s === 'warning' ? 'warning' : 'info'; }
+
+    function handlePodAction(cmd, row) {
+      ({ detail: showDetail, logs: showLogs, diagnose: diagnosePod, restart: restartPod, delete: confirmDelete })[cmd]?.(row);
+    }
+
+    async function showDetail(row) {
+      podDetail.value = mockMode.value
+        ? { ...row, containers: [{ name: 'main', image: 'app:latest', state: 'Running', restartCount: row.restartCount }], cpuRequest: '0.5 cores', memoryRequest: '512 Mi' }
+        : await apiFetch(`/pods/${row.namespace}/${row.name}`);
+      detailVisible.value = true;
+    }
+    async function showLogs(row) {
+      logPodRef.value = row; logPodName.value = row.namespace + '/' + row.name;
+      logContent.value = mockMode.value ? MOCK.logs : await apiFetch(`/pods/${row.namespace}/${row.name}/logs?tailLines=500`);
+      logVisible.value = true;
+    }
+    async function refreshLogs() { if (logPodRef.value) await showLogs(logPodRef.value); }
+    async function diagnosePod(row) { diagPod.value = row.namespace + '/' + row.name; activeTab.value = 'diagnose'; await runDiagnose(); }
+    async function diagnoseFromLog() {
+      if (logPodRef.value) { diagPod.value = logPodRef.value.namespace + '/' + logPodRef.value.name; activeTab.value = 'diagnose'; await runDiagnose(); }
+    }
+    async function runDiagnose() {
+      if (!diagPod.value) return ElementPlus.ElMessage.warning('请选择 Pod');
+      diagLoading.value = true;
+      try {
+        const [ns, name] = diagPod.value.split('/');
+        diagnosis.value = mockMode.value ? { ...MOCK.diagnosis, podName: name, namespace: ns } : await apiFetch(`/pods/${ns}/${name}/diagnose?tailLines=1000`);
+      } finally { diagLoading.value = false; }
+    }
+    function confirmDelete(row) {
+      ElementPlus.ElMessageBox.confirm(`确定删除 ${row.namespace}/${row.name}？不可撤销。`, '确认删除', { type: 'warning' })
+        .then(() => deletePod(row)).catch(() => {});
+    }
+    async function deletePod(row) {
+      if (!mockMode.value) await apiFetch(`/pods/${row.namespace}/${row.name}`, { method: 'DELETE' });
+      ElementPlus.ElMessage.success('已删除'); loadPods();
+    }
+    async function restartPod(row) {
+      ElementPlus.ElMessageBox.confirm(`确定重启 ${row.namespace}/${row.name}？`, '确认', { type: 'warning' })
+        .then(async () => {
+          if (!mockMode.value) await apiFetch(`/pods/${row.namespace}/${row.name}/restart`, { method: 'POST' });
+          ElementPlus.ElMessage.success('重启指令已发送'); loadPods();
+        }).catch(() => {});
+    }
+
+    function onPodClick(pod, evt) {
+      if (evt.shiftKey) {
+        const i = selectedPodIds.value.indexOf(pod.id);
+        i >= 0 ? selectedPodIds.value.splice(i, 1) : selectedPodIds.value.push(pod.id);
+        if (pod.abnormal) {
+          highlightedIds.value = new Set([pod.id, ...(pod.upstreamIds||[]), ...(pod.downstreamIds||[])]);
+        } else highlightedIds.value = new Set();
+        return;
+      }
+      enterPod({ namespace: pod.namespace, name: pod.name, status: pod.status, abnormal: pod.abnormal });
+    }
+    function clearSelection() { selectedPodIds.value = []; highlightedIds.value = new Set(); }
+
+    function svgPoint(evt) {
+      const svg = document.querySelector('.topology-svg');
+      const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+      return pt.matrixTransform(svg.getScreenCTM().inverse());
+    }
+    function onCanvasMouseDown(evt) {
+      if (evt.target.closest('.pod-node')) return;
+      selecting.value = true;
+      const p = svgPoint(evt); selectStart.x = selectEnd.x = p.x; selectStart.y = selectEnd.y = p.y;
+    }
+    function onCanvasMouseMove(evt) {
+      if (!selecting.value) return;
+      const p = svgPoint(evt); selectEnd.x = p.x; selectEnd.y = p.y;
+    }
+    function onCanvasMouseUp() {
+      if (!selecting.value) return;
+      selecting.value = false;
+      const x1 = Math.min(selectStart.x, selectEnd.x), x2 = Math.max(selectStart.x, selectEnd.x);
+      const y1 = Math.min(selectStart.y, selectEnd.y), y2 = Math.max(selectStart.y, selectEnd.y);
+      const sel = allPodsFlat.value.filter(p => { const n = nodePos.value[p.id]; return n && n.x >= x1 && n.x <= x2 && n.y >= y1 && n.y <= y2; }).map(p => p.id);
+      if (sel.length) selectedPodIds.value = sel;
+    }
+    function showPodTooltip(pod, evt) {
+      const rect = document.querySelector('.topology-canvas-wrap').getBoundingClientRect();
+      tooltip.visible = true; tooltip.pod = pod;
+      tooltip.x = evt.clientX - rect.left + 12; tooltip.y = evt.clientY - rect.top + 12;
+    }
+    function hidePodTooltip() { tooltip.visible = false; }
+
+    async function batchRestartSelected() {
+      const pods = selectedPodIds.value.map(id => { const [ns, name] = id.split('/'); return { namespace: ns, name }; });
+      ElementPlus.ElMessageBox.confirm(`批量重启 ${pods.length} 个 Pod？`, '确认', { type: 'warning' })
+        .then(async () => {
+          if (!mockMode.value) await apiFetch('/pods/batch/restart', { method: 'POST', body: JSON.stringify(pods) });
+          ElementPlus.ElMessage.success('已发送'); clearSelection(); loadTopology(); loadPods();
+        }).catch(() => {});
+    }
+    async function batchDeleteSelected() {
+      const pods = selectedPodIds.value.map(id => { const [ns, name] = id.split('/'); return { namespace: ns, name }; });
+      ElementPlus.ElMessageBox.confirm(`批量删除 ${pods.length} 个 Pod？`, '确认', { type: 'error' })
+        .then(async () => {
+          if (!mockMode.value) await apiFetch('/pods/batch/delete', { method: 'POST', body: JSON.stringify(pods) });
+          ElementPlus.ElMessage.success('已删除'); clearSelection(); loadTopology(); loadPods();
+        }).catch(() => {});
+    }
+
+    onMounted(async () => {
+      updateClock();
+      clockTimer = setInterval(updateClock, 1000);
+      await checkConnection(); await loadNamespaces(); await loadPods();
+      await loadTopology(); await loadCost(); await pollAlerts();
+      alertTimer = setInterval(pollAlerts, 15000);
+    });
+    onUnmounted(() => {
+      if (alertTimer) clearInterval(alertTimer);
+      if (clockTimer) clearInterval(clockTimer);
+      window.speechSynthesis?.cancel();
+      stopLogAutoRefresh();
+      disconnectTerminal();
+    });
+
+    return {
+      mockMode, connected, activeTab, pageTitle, namespaces, namespace, keyword,
+      podList, page, pageSize, total, loading, podStats, currentTime, allAlerts,
+      topoNamespace, topology, nodePos, domainLayout, canvasW, canvasH,
+      selectedPodIds, highlightedIds, selecting, selectStart, selectEnd, tooltip,
+      diagPod, diagnosis, diagLoading, costNamespace, costData,
+      detailVisible, podDetail, logVisible, logContent, logPodName,
+      voiceAlertEnabled, latestAlerts, allPodsFlat,
+      cockpitVisible, cockpitPod, cockpitData, cockpitLoading, cockpitTab, cockpitTabs,
+      logAutoRefresh, terminalRef, terminalConnected,
+      loadPods, loadTopology, loadCost, onVoiceToggle, onNamespaceChange, refreshCurrent,
+      handlePodAction, statusClass, podStatusClass, podCardStatus, edgeWidth, truncate, severityType, eventClass,
+      showDetail, showLogs, refreshLogs, diagnosePod, diagnoseFromLog, runDiagnose,
+      confirmDelete, restartPod, onPodClick, clearSelection, enterPod, closeCockpit,
+      loadCockpit, refreshCockpit, refreshCockpitLogs, restartFromCockpit, enterSelectedPod,
+      onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseUp,
+      showPodTooltip, hidePodTooltip, batchRestartSelected, batchDeleteSelected,
+    };
+  }
+});
+
+app.use(ElementPlus);
+for (const [k, c] of Object.entries(ElementPlusIconsVue)) app.component(k, c);
+app.mount('#app');
+</script>
+</body>
+</html>

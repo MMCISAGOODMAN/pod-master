@@ -1,0 +1,68 @@
+# API 网关 — gateway 业务域（流量拓扑入口）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: podmaster-demo
+  labels:
+    app: api-gateway
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        app.kubernetes.io/name: api-gateway
+        app.kubernetes.io/component: gateway
+        app.kubernetes.io/part-of: podmaster-demo
+        business-domain: gateway
+        tier: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-c"]
+          args:
+            - |
+              echo "[INFO] ApiGateway started on :80"
+              echo "[INFO] routing to order-service, payment-service, user-service"
+              while true; do sleep 3600; done
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: podmaster-demo
+  labels:
+    app: api-gateway
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: gateway
+  annotations:
+    # 显式声明下游调用（流量拓扑优先读取此注解）
+    podmaster.io/topology-edges: "order-service,payment-service,user-service"
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

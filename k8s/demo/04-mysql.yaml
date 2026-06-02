@@ -1,0 +1,64 @@
+# MySQL 数据库 — database 业务域（叶子节点，无下游）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-db
+  namespace: podmaster-demo
+  labels:
+    app: mysql-db
+    app.kubernetes.io/name: mysql-db
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-db
+  template:
+    metadata:
+      labels:
+        app: mysql-db
+        app.kubernetes.io/name: mysql-db
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: podmaster-demo
+        business-domain: database
+        tier: db
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: demo123456
+            - name: MYSQL_DATABASE
+              value: podmaster
+          ports:
+            - containerPort: 3306
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-db
+  namespace: podmaster-demo
+  labels:
+    app: mysql-db
+    app.kubernetes.io/name: mysql-db
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: podmaster-demo
+    business-domain: database
+spec:
+  selector:
+    app: mysql-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
